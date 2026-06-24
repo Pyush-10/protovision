@@ -194,10 +194,10 @@ export default function App() {
     setActiveImage(item);
     addTerminalLog('TERMINAL', `Loaded parameter frame of artifact [${item.id.slice(0, 8)}] into console.`, 'info');
     
-    // Focus the prompt textarea and smooth-scroll it into view
+    // Focus the prompt textarea (preventing default jump) and smooth-scroll to top of page
     if (promptInputRef.current) {
-      promptInputRef.current.focus();
-      promptInputRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      promptInputRef.current.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
