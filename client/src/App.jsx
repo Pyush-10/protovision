@@ -107,7 +107,7 @@ export default function App() {
         if (data.status === 'success') {
           // Finish generation
           setActiveImage(data.data);
-          setGallery((prev) => [data.data, ...prev]);
+          fetchGallery(); // Refresh gallery state from database
           setIsGenerating(false);
           setTerminalStatus('SYNTHESIS COMPLETE');
           addTerminalLog('SYSTEM', 'Image sync complete. Saved in gallery.', 'success');
