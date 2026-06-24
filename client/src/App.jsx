@@ -24,6 +24,7 @@ export default function App() {
   const [gallery, setGallery] = useState([]);
   const [terminalStatus, setTerminalStatus] = useState('SYSTEM READY');
   const [errorMsg, setErrorMsg] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
   const eventSourceRef = useRef(null);
   const logFeedEndRef = useRef(null);
@@ -154,12 +155,15 @@ export default function App() {
     }
   };
 
-  const handleDelete = async (id, e) => {
-    e.stopPropagation(); // Avoid triggering card loading
+  const handleDelete = (id, e) => {
+    if (e) e.stopPropagation(); // Avoid triggering card loading
+    setConfirmDeleteId(id);
+  };
 
-    if (!confirm('Are you sure you want to permanently delete this artwork from disk?')) {
-      return;
-    }
+  const executeDelete = async () => {
+    if (!confirmDeleteId) return;
+    const id = confirmDeleteId;
+    setConfirmDeleteId(null);
 
     try {
       const res = await fetch(`/api/gallery/${id}`, { method: 'DELETE' });
@@ -171,11 +175,11 @@ export default function App() {
           setActiveImage(null);
         }
       } else {
-        alert(`Failed to delete: ${json.error}`);
+        addTerminalLog('VAULT', `Purge protocol failed: ${json.error}`, 'error');
       }
     } catch (err) {
       console.error('Delete fetch error:', err);
-      alert('Network error when attempting delete.');
+      addTerminalLog('VAULT', `Purge protocol breakdown: ${err.message}`, 'error');
     }
   };
 
@@ -471,6 +475,40 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      {/* Cyber modal overlay for purge protocol confirmation */}
+      {confirmDeleteId && (
+        <div className="cyber-modal-overlay">
+          <div className="cyber-modal">
+            <div className="panel-header">
+              <span className="panel-title text-error">⚠️ SECURITY PROTOCOL: PURGE VAULT</span>
+            </div>
+            <p className="modal-text">
+              Are you sure you want to permanently de-synchronize and purge artifact 
+              <span className="text-highlight"> [{confirmDeleteId.slice(0, 8)}] </span> 
+              from the server storage vault? This action cannot be reversed.
+            </p>
+            <div className="modal-actions">
+              <button 
+                type="button"
+                className="cyber-button secondary" 
+                onClick={() => setConfirmDeleteId(null)}
+                style={{ padding: '0.6rem 1.2rem', fontSize: '0.85rem' }}
+              >
+                CANCEL
+              </button>
+              <button 
+                type="button"
+                className="cyber-button error-btn" 
+                onClick={executeDelete}
+                style={{ padding: '0.6rem 1.2rem', fontSize: '0.85rem' }}
+              >
+                CONFIRM PURGE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

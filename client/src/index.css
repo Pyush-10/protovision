@@ -828,3 +828,90 @@ body::after {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-8px); }
 }
+
+/* ==========================================
+   CYBERMODAL (CUSTOM DIALOGS)
+   ========================================== */
+.cyber-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(5, 5, 10, 0.85);
+  backdrop-filter: blur(6px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  animation: fade-in 0.2s ease-out;
+}
+
+.cyber-modal {
+  background: var(--bg-panel-solid);
+  border: 2px solid var(--neon-magenta);
+  box-shadow: var(--glow-magenta);
+  padding: 2rem;
+  max-width: 500px;
+  width: 90%;
+  border-radius: 8px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+
+.modal-text {
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+}
+
+.text-highlight {
+  color: var(--neon-yellow);
+  text-shadow: var(--glow-yellow);
+  font-family: var(--font-mono);
+  font-weight: bold;
+}
+
+.text-error {
+  color: var(--neon-magenta);
+  text-shadow: var(--glow-magenta);
+}
+
+.cyber-button.error-btn {
+  background: linear-gradient(135deg, var(--neon-magenta) 0%, hsl(320, 100%, 35%) 100%);
+  color: var(--text-primary);
+  box-shadow: var(--glow-magenta);
+}
+
+.cyber-button.error-btn:hover {
+  background: linear-gradient(135deg, hsl(320, 100%, 65%) 0%, var(--neon-magenta) 100%);
+  box-shadow: 0 0 20px hsl(320, 100%, 55%, 0.6);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
