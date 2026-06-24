@@ -28,6 +28,7 @@ export default function App() {
 
   const eventSourceRef = useRef(null);
   const logFeedEndRef = useRef(null);
+  const promptInputRef = useRef(null);
 
   // Fetch gallery on startup
   useEffect(() => {
@@ -184,7 +185,8 @@ export default function App() {
   };
 
   const handleTweak = (item) => {
-    setPrompt(item.prompt);
+    if (!item) return;
+    setPrompt(item.prompt || '');
     setStyle(item.style || 'Neon-Noir');
     setSeed(item.seed ? item.seed.toString() : '');
     setWidth(item.width || 512);
@@ -192,8 +194,11 @@ export default function App() {
     setActiveImage(item);
     addTerminalLog('TERMINAL', `Loaded parameter frame of artifact [${item.id.slice(0, 8)}] into console.`, 'info');
     
-    // Smooth scroll up to editor
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Focus the prompt textarea and smooth-scroll it into view
+    if (promptInputRef.current) {
+      promptInputRef.current.focus();
+      promptInputRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
   };
 
   return (
@@ -230,6 +235,7 @@ export default function App() {
               <div className="form-group">
                 <label className="form-label">Stylistic Semantic Base</label>
                 <textarea
+                  ref={promptInputRef}
                   className="cyber-textarea"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
