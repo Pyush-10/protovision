@@ -194,10 +194,13 @@ export default function App() {
     setActiveImage(item);
     addTerminalLog('TERMINAL', `Loaded parameter frame of artifact [${item.id.slice(0, 8)}] into console.`, 'info');
     
-    // Focus the prompt textarea (preventing default jump) and smooth-scroll to top of page
+    // Focus the prompt textarea (preventing default jump)
     if (promptInputRef.current) {
       promptInputRef.current.focus({ preventScroll: true });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      // Only scroll to the top of the page if the user is scrolled down (e.g. viewing the gallery)
+      if (window.scrollY > 300) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     }
   };
 
