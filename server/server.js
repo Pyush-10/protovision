@@ -1,9 +1,24 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
+const { clerkMiddleware, requireAuth } = require('@clerk/express');
+const serverless = require('serverless-http');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+
+// S3 Storage Setup
+const S3_BUCKET = process.env.S3_BUCKET_NAME;
+const s3Client = S3_BUCKET ? new S3Client({ region: process.env.AWS_REGION || 'us-east-1' }) : null;
+
+// Resiliency check: If keys are placeholder, fall back to safe warnings instead of crashing
+const CLERK_PUB_KEY = process.env.CLERK_PUBLISHABLE_KEY;
+const isAuthPlaceholder = !CLERK_PUB_KEY || CLERK_PUB_KEY.includes('placeholder') || !CLERK_PUB_KEY.startsWith('pk_');
+const authGuard = isAuthPlaceholder 
+  ? () => (req, res, next) => res.status(401).json({ success: false, error: 'Auth uplink offline. Configure credentials.' }) 
+  : requireAuth;
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -12,9 +27,30 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Ensure the images folder exists
+// Custom middleware to translate SSE query token parameter to Authorization header
+app.use((req, res, next) => {
+  if (req.query && req.query.token) {
+    req.headers.authorization = `Bearer ${req.query.token}`;
+  }
+  next();
+});
+
+if (isAuthPlaceholder) {
+  console.warn("=================================================");
+  console.warn("  WARNING: CLERK AUTHENTICATION KEYS ARE MISSING  ");
+  console.warn("  Configure server/.env to enable auth uplink.    ");
+  console.warn("=================================================");
+  app.use((req, res, next) => {
+    req.auth = { userId: null };
+    next();
+  });
+} else {
+  app.use(clerkMiddleware());
+}
+
+// Ensure the images folder exists (only for local storage fallback)
 const IMAGES_DIR = path.join(__dirname, 'data', 'images');
-if (!fs.existsSync(IMAGES_DIR)) {
+if (!S3_BUCKET && !fs.existsSync(IMAGES_DIR)) {
   fs.mkdirSync(IMAGES_DIR, { recursive: true });
 }
 
@@ -39,9 +75,10 @@ function embellishPrompt(prompt, style) {
 }
 
 // GET all gallery items
-app.get('/api/gallery', async (req, res) => {
+app.get('/api/gallery', authGuard(), async (req, res) => {
   try {
-    const images = await db.getAllGenerations();
+    const userId = req.auth.userId;
+    const images = await db.getAllGenerations(userId);
     res.json({ success: true, data: images });
   } catch (error) {
     console.error('Database fetch error:', error);
@@ -50,16 +87,22 @@ app.get('/api/gallery', async (req, res) => {
 });
 
 // DELETE a gallery item
-app.delete('/api/gallery/:id', async (req, res) => {
+app.delete('/api/gallery/:id', authGuard(), async (req, res) => {
   const { id } = req.params;
+  const userId = req.auth.userId;
   try {
     const record = await db.getGenerationById(id);
     if (!record) {
       return res.status(404).json({ success: false, error: 'Item not found.' });
     }
 
+    // Ensure the operator owns this generation artifact
+    if (record.user_id !== userId) {
+      return res.status(403).json({ success: false, error: 'Access denied: operator mismatch.' });
+    }
+
     // Delete database record
-    await db.deleteGeneration(id);
+    await db.deleteGeneration(id, userId);
 
     // Delete image file from disk
     const fileName = path.basename(record.filepath);
@@ -76,8 +119,9 @@ app.delete('/api/gallery/:id', async (req, res) => {
 });
 
 // GET generate (Server-Sent Events streaming)
-app.get('/api/generate', async (req, res) => {
+app.get('/api/generate', authGuard(), async (req, res) => {
   const { prompt, seed, width = 512, height = 512, style = 'Neon-Noir' } = req.query;
+  const userId = req.auth.userId;
 
   // Set headers for Server-Sent Events (SSE)
   res.writeHead(200, {
@@ -213,18 +257,37 @@ app.get('/api/generate', async (req, res) => {
     const relativeFilePath = path.join('data', 'images', fileName);
     const absoluteFilePath = path.join(IMAGES_DIR, fileName);
 
-    // Save image buffer to local filesystem
-    fs.writeFileSync(absoluteFilePath, buffer);
+    let filepath = '';
+    if (s3Client && S3_BUCKET) {
+      const s3Key = `images/${id}.jpg`;
+      try {
+        await s3Client.send(new PutObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: s3Key,
+          Body: buffer,
+          ContentType: 'image/jpeg'
+        }));
+        filepath = `https://${S3_BUCKET}.s3.${process.env.AWS_REGION || 'us-east-1'}.amazonaws.com/${s3Key}`;
+      } catch (s3Error) {
+        console.error('Failed to upload image to S3:', s3Error);
+        return sendError(`Failed to save image in S3 storage: ${s3Error.message}`);
+      }
+    } else {
+      // Save image buffer to local filesystem
+      fs.writeFileSync(absoluteFilePath, buffer);
+      filepath = `server/${relativeFilePath.replace(/\\/g, '/')}`; // Database relative URL format
+    }
 
-    // Save metadata record in SQLite
+    // Save metadata record in Database (DynamoDB or SQLite)
     const savedRecord = await db.saveGeneration({
       id,
       prompt,
       seed: finalSeed,
       width: parseInt(width),
       height: parseInt(height),
-      filepath: `server/${relativeFilePath.replace(/\\/g, '/')}`, // Database relative URL format
-      style
+      filepath,
+      style,
+      userId
     });
 
     // Stage 6: Completion
@@ -255,14 +318,21 @@ app.get('*', (req, res) => {
 // Run server and load database
 db.initDb()
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`=================================================`);
-      console.log(`  NEURAL CANVAS Express Backend online on port ${PORT} `);
-      console.log(`  Serving uploads from: ${IMAGES_DIR} `);
-      console.log(`=================================================`);
-    });
+    if (!process.env.AWS_LAMBDA_FUNCTION_NAME) {
+      app.listen(PORT, () => {
+        console.log(`=================================================`);
+        console.log(`  NEURAL CANVAS Express Backend online on port ${PORT} `);
+        console.log(`  Serving uploads from: ${IMAGES_DIR} `);
+        console.log(`=================================================`);
+      });
+    }
   })
   .catch((err) => {
     console.error('Unable to start application server:', err);
-    process.exit(1);
+    if (!process.env.AWS_LAMBDA_FUNCTION_NAME) {
+      process.exit(1);
+    }
   });
+
+// Wrap and export Express app handler for AWS Lambda
+module.exports.handler = serverless(app);

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { SignedIn, SignedOut, SignIn, UserButton, useAuth } from '@clerk/clerk-react';
 
 const STYLES = [
   { name: 'Neon-Noir', desc: 'Dark streets, rain, neon glows.' },
@@ -9,6 +10,8 @@ const STYLES = [
 ];
 
 export default function App() {
+  const { getToken, isSignedIn } = useAuth();
+
   // Config state
   const [prompt, setPrompt] = useState('Cybernetic mercenary standing in a rain-slicked neon alleyway');
   const [style, setStyle] = useState('Neon-Noir');
@@ -30,10 +33,12 @@ export default function App() {
   const logFeedEndRef = useRef(null);
   const promptInputRef = useRef(null);
 
-  // Fetch gallery on startup
+  // Fetch gallery when signed in
   useEffect(() => {
-    fetchGallery();
-  }, []);
+    if (isSignedIn) {
+      fetchGallery();
+    }
+  }, [isSignedIn]);
 
   // Auto scroll terminal logs
   useEffect(() => {
@@ -44,7 +49,12 @@ export default function App() {
 
   const fetchGallery = async () => {
     try {
-      const res = await fetch('/api/gallery');
+      const token = await getToken();
+      const res = await fetch('/api/gallery', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
       const json = await res.json();
       if (json.success) {
         setGallery(json.data);
@@ -63,13 +73,14 @@ export default function App() {
     ]);
   };
 
-  // Convert db filepath (e.g. server/data/images/...) to static server endpoint (/uploads/...)
+  // Convert db filepath (e.g. server/data/images/...) to static server endpoint (/uploads/...) or S3 URL
   const getImageUrl = (filepath) => {
     if (!filepath) return '';
+    if (filepath.startsWith('http')) return filepath;
     return filepath.replace('server/data/images/', '/uploads/');
   };
 
-  const handleGenerate = (e) => {
+  const handleGenerate = async (e) => {
     if (e) e.preventDefault();
 
     if (!prompt.trim() || prompt.trim().length < 3) {
@@ -88,13 +99,22 @@ export default function App() {
 
     addTerminalLog('ALIGNMENT', 'Initiating generator uplink protocol...', 'info');
 
+    // Retrieve Clerk token for authentication
+    let token = '';
+    try {
+      token = await getToken();
+    } catch (err) {
+      console.error('Failed to retrieve authentication token:', err);
+    }
+
     // Build URL query string
     const queryParams = new URLSearchParams({
       prompt,
       style,
       width,
       height,
-      seed: seed.trim()
+      seed: seed.trim(),
+      token: token || ''
     });
 
     // Open connection
@@ -167,7 +187,13 @@ export default function App() {
     setConfirmDeleteId(null);
 
     try {
-      const res = await fetch(`/api/gallery/${id}`, { method: 'DELETE' });
+      const token = await getToken();
+      const res = await fetch(`/api/gallery/${id}`, { 
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
       const json = await res.json();
       if (json.success) {
         setGallery((prev) => prev.filter((item) => item && item.id !== id));
@@ -215,275 +241,302 @@ export default function App() {
           <div className="tagline">UPLINK ACTIVE // v1.0.4</div>
         </div>
         <div className="system-status">
-          <div className="status-indicator">
-            <div className="status-dot"></div>
-            <span>{isGenerating ? 'UPLINK SYNCHRONIZING...' : 'CORE ONLINE'}</span>
-          </div>
-          <div>VAULT COGNITION: {gallery.length} UNITS</div>
+          <SignedIn>
+            <div className="status-indicator">
+              <div className="status-dot"></div>
+              <span>{isGenerating ? 'UPLINK SYNCHRONIZING...' : 'CORE ONLINE'}</span>
+            </div>
+            <div>VAULT COGNITION: {gallery.length} UNITS</div>
+            <div style={{ marginLeft: '1rem', display: 'flex', alignItems: 'center' }}>
+              <UserButton afterSignOutUrl="/" />
+            </div>
+          </SignedIn>
+          <SignedOut>
+            <div className="status-indicator" style={{ color: 'var(--neon-magenta)' }}>
+              <div className="status-dot" style={{ backgroundColor: 'var(--neon-magenta)', boxShadow: 'var(--glow-magenta)' }}></div>
+              <span>ACCESS PROTOCOL REQUIRED</span>
+            </div>
+          </SignedOut>
         </div>
       </header>
 
-      <main className="main-wrapper">
-        <div className="workspace-grid">
-          
-          {/* Left panel: Prompt parameters */}
-          <section className="cyber-panel">
-            <div className="panel-header">
-              <span className="panel-title">Neural Input Deck</span>
-              <span className="panel-subtitle">COGNITIVE PARAMETERS</span>
-            </div>
-
-            <form onSubmit={handleGenerate} className="cyber-panel" style={{ padding: 0, border: 'none', background: 'transparent', boxShadow: 'none' }}>
-              {/* Prompt Text area */}
-              <div className="form-group">
-                <label className="form-label">Stylistic Semantic Base</label>
-                <textarea
-                  ref={promptInputRef}
-                  className="cyber-textarea"
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Describe your design vision in detail (e.g. humanoid tactical drone)..."
-                  disabled={isGenerating}
-                />
+      <SignedIn>
+        <main className="main-wrapper">
+          <div className="workspace-grid">
+            
+            {/* Left panel: Prompt parameters */}
+            <section className="cyber-panel">
+              <div className="panel-header">
+                <span className="panel-title">Neural Input Deck</span>
+                <span className="panel-subtitle">COGNITIVE PARAMETERS</span>
               </div>
 
-              {/* Styles picker */}
-              <div className="form-group">
-                <label className="form-label">Style Matrix Filters</label>
-                <div className="style-grid">
-                  {STYLES.map((s) => (
-                    <div
-                      key={s.name}
-                      className={`style-card ${style === s.name ? 'active' : ''}`}
-                      onClick={() => !isGenerating && setStyle(s.name)}
+              <form onSubmit={handleGenerate} className="cyber-panel" style={{ padding: 0, border: 'none', background: 'transparent', boxShadow: 'none' }}>
+                {/* Prompt Text area */}
+                <div className="form-group">
+                  <label className="form-label">Stylistic Semantic Base</label>
+                  <textarea
+                    ref={promptInputRef}
+                    className="cyber-textarea"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Describe your design vision in detail (e.g. humanoid tactical drone)..."
+                    disabled={isGenerating}
+                  />
+                </div>
+
+                {/* Styles picker */}
+                <div className="form-group">
+                  <label className="form-label">Style Matrix Filters</label>
+                  <div className="style-grid">
+                    {STYLES.map((s) => (
+                      <div
+                        key={s.name}
+                        className={`style-card ${style === s.name ? 'active' : ''}`}
+                        onClick={() => !isGenerating && setStyle(s.name)}
+                      >
+                        <span className="style-name">{s.name}</span>
+                        <span className="style-desc">{s.desc}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Seed and Dimensions parameters */}
+                <div className="parameter-row">
+                  <div className="form-group">
+                    <label className="form-label">Dimension Width</label>
+                    <select
+                      className="cyber-input"
+                      value={width}
+                      onChange={(e) => setWidth(parseInt(e.target.value))}
+                      disabled={isGenerating}
                     >
-                      <span className="style-name">{s.name}</span>
-                      <span className="style-desc">{s.desc}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+                      <option value="256">256 px (Fast)</option>
+                      <option value="512">512 px (Balanced)</option>
+                      <option value="768">768 px (High-Res)</option>
+                      <option value="1024">1024 px (Full)</option>
+                    </select>
+                  </div>
 
-              {/* Seed and Dimensions parameters */}
-              <div className="parameter-row">
+                  <div className="form-group">
+                    <label className="form-label">Dimension Height</label>
+                    <select
+                      className="cyber-input"
+                      value={height}
+                      onChange={(e) => setHeight(parseInt(e.target.value))}
+                      disabled={isGenerating}
+                    >
+                      <option value="256">256 px</option>
+                      <option value="512">512 px</option>
+                      <option value="768">768 px</option>
+                      <option value="1024">1024 px</option>
+                    </select>
+                  </div>
+                </div>
+
                 <div className="form-group">
-                  <label className="form-label">Dimension Width</label>
-                  <select
+                  <label className="form-label">Seeding Layer (Numeric Key)</label>
+                  <input
+                    type="text"
                     className="cyber-input"
-                    value={width}
-                    onChange={(e) => setWidth(parseInt(e.target.value))}
+                    value={seed}
+                    onChange={(e) => setSeed(e.target.value.replace(/\D/g, ''))}
+                    placeholder="Random Layer"
                     disabled={isGenerating}
-                  >
-                    <option value="256">256 px (Fast)</option>
-                    <option value="512">512 px (Balanced)</option>
-                    <option value="768">768 px (High-Res)</option>
-                    <option value="1024">1024 px (Full)</option>
-                  </select>
+                  />
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Dimension Height</label>
-                  <select
-                    className="cyber-input"
-                    value={height}
-                    onChange={(e) => setHeight(parseInt(e.target.value))}
-                    disabled={isGenerating}
-                  >
-                    <option value="256">256 px</option>
-                    <option value="512">512 px</option>
-                    <option value="768">768 px</option>
-                    <option value="1024">1024 px</option>
-                  </select>
+                {/* Buttons */}
+                <div className="form-group" style={{ marginTop: '0.5rem' }}>
+                  {!isGenerating ? (
+                    <button type="submit" className="cyber-button">
+                      <span>⚡ SYNTHESIZE ARTIFACT</span>
+                    </button>
+                  ) : (
+                    <button type="button" className="cyber-button secondary" onClick={handleCancel}>
+                      <span>🔴 TERMINATE UPLINK</span>
+                    </button>
+                  )}
                 </div>
-              </div>
+              </form>
 
+              {/* Retro Monitor Log (SSE Stream output) */}
               <div className="form-group">
-                <label className="form-label">Seeding Layer (Numeric Key)</label>
-                <input
-                  type="text"
-                  className="cyber-input"
-                  value={seed}
-                  onChange={(e) => setSeed(e.target.value.replace(/\D/g, ''))}
-                  placeholder="Random Layer"
-                  disabled={isGenerating}
-                />
+                <label className="form-label">Generator Terminal Logger</label>
+                <div className="terminal-wrapper">
+                  <div className="terminal-header">
+                    <span>LOG STREAM: {terminalStatus}</span>
+                    <span>SYS_LOG_ACTIVE</span>
+                  </div>
+                  <div className="terminal-log-feed">
+                    {generationLogs.length === 0 && (
+                      <div className="log-line info">
+                        <span className="timestamp">[{new Date().toLocaleTimeString()}]</span>
+                        <span>SYSTEM: Waiting for uplink deployment...</span>
+                      </div>
+                    )}
+                    {generationLogs.map((log) => (
+                      <div key={log.id} className={`log-line ${log.status}`}>
+                        <span className="timestamp">[{log.time}]</span>
+                        <span>{log.stage ? `${log.stage}: ` : ''}{log.message}</span>
+                      </div>
+                    ))}
+                    <div ref={logFeedEndRef} />
+                  </div>
+                  <div className="terminal-input-row">
+                    <span>&gt; {isGenerating ? 'SYNTHESIZING_SEQUENCE_PENDING' : 'OPERATOR_AWAITING_INPUT'}</span>
+                    <span className="cursor-blink"></span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Right panel: Active generation canvas */}
+            <section className="cyber-panel magenta">
+              <div className="panel-header">
+                <span className="panel-title">Holographic Output Canvas</span>
+                <span className="panel-subtitle">ACTIVE PREVIEW</span>
               </div>
 
-              {/* Buttons */}
-              <div className="form-group" style={{ marginTop: '0.5rem' }}>
-                {!isGenerating ? (
-                  <button type="submit" className="cyber-button">
-                    <span>⚡ SYNTHESIZE ARTIFACT</span>
-                  </button>
-                ) : (
-                  <button type="button" className="cyber-button secondary" onClick={handleCancel}>
-                    <span>🔴 TERMINATE UPLINK</span>
-                  </button>
+              <div className="canvas-wrapper">
+                {!activeImage && !isGenerating && (
+                  <div className="canvas-placeholder">
+                    <div className="placeholder-icon">📐</div>
+                    <div className="placeholder-text">
+                      <h3>Canvas Vacant</h3>
+                      <p>Load an artifact prompt parameters into the deck or initiate a synthesis cycle to view preview graphics.</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Active Image container */}
+                {(activeImage || isGenerating) && (
+                  <div className="active-image-container">
+                    {activeImage && !isGenerating && (
+                      <img
+                        src={getImageUrl(activeImage?.filepath)}
+                        alt={activeImage?.prompt || 'Generated art'}
+                        className="active-image"
+                      />
+                    )}
+
+                    {isGenerating && (
+                      <div className="canvas-loading-overlay">
+                        <div className="spinner-container">
+                          <div className="spinner-ring"></div>
+                          <div className="spinner-ring"></div>
+                          <div className="spinner-ring"></div>
+                          <div className="spinner-ring"></div>
+                        </div>
+                        <div className="canvas-loading-text">COGNITIVE FLUX ACTIVE: {progress}%</div>
+                        <div className="progress-bar-container">
+                          <div className="progress-bar-fill" style={{ width: `${progress}%` }}></div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Image HUD controls */}
+                {activeImage && !isGenerating && (
+                  <div className="image-hud">
+                    <a
+                      href={getImageUrl(activeImage?.filepath)}
+                      download={`neural-canvas-${activeImage?.id || 'export'}.jpg`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="cyber-button"
+                      style={{ padding: '0.6rem 1rem', fontSize: '0.8rem', textDecoration: 'none' }}
+                    >
+                      💾 EXPORT DATA
+                    </a>
+                    <button
+                      className="cyber-button secondary"
+                      onClick={() => handleTweak(activeImage)}
+                      style={{ padding: '0.6rem 1rem', fontSize: '0.8rem' }}
+                    >
+                      ⚙️ TWEAK PROMPT
+                    </button>
+                  </div>
                 )}
               </div>
-            </form>
+            </section>
 
-            {/* Retro Monitor Log (SSE Stream output) */}
-            <div className="form-group">
-              <label className="form-label">Generator Terminal Logger</label>
-              <div className="terminal-wrapper">
-                <div className="terminal-header">
-                  <span>LOG STREAM: {terminalStatus}</span>
-                  <span>SYS_LOG_ACTIVE</span>
-                </div>
-                <div className="terminal-log-feed">
-                  {generationLogs.length === 0 && (
-                    <div className="log-line info">
-                      <span className="timestamp">[{new Date().toLocaleTimeString()}]</span>
-                      <span>SYSTEM: Waiting for uplink deployment...</span>
-                    </div>
-                  )}
-                  {generationLogs.map((log) => (
-                    <div key={log.id} className={`log-line ${log.status}`}>
-                      <span className="timestamp">[{log.time}]</span>
-                      <span>{log.stage ? `${log.stage}: ` : ''}{log.message}</span>
-                    </div>
-                  ))}
-                  <div ref={logFeedEndRef} />
-                </div>
-                <div className="terminal-input-row">
-                  <span>&gt; {isGenerating ? 'SYNTHESIZING_SEQUENCE_PENDING' : 'OPERATOR_AWAITING_INPUT'}</span>
-                  <span className="cursor-blink"></span>
-                </div>
-              </div>
-            </div>
-          </section>
+          </div>
 
-          {/* Right panel: Active generation canvas */}
-          <section className="cyber-panel magenta">
+          {/* Gallery bottom grid */}
+          <section className="gallery-section">
             <div className="panel-header">
-              <span className="panel-title">Holographic Output Canvas</span>
-              <span className="panel-subtitle">ACTIVE PREVIEW</span>
+              <span className="panel-title">Server Storage Vault (Gallery)</span>
+              <span className="panel-subtitle">SAVED GENERATIONS</span>
             </div>
 
-            <div className="canvas-wrapper">
-              {!activeImage && !isGenerating && (
-                <div className="canvas-placeholder">
-                  <div className="placeholder-icon">📐</div>
-                  <div className="placeholder-text">
-                    <h3>Canvas Vacant</h3>
-                    <p>Load an artifact prompt parameters into the deck or initiate a synthesis cycle to view preview graphics.</p>
-                  </div>
+            <div className="gallery-grid">
+              {gallery.length === 0 ? (
+                <div className="gallery-empty">
+                  VAULT EMPTY. Synthesized creations are preserved server-side automatically here.
                 </div>
-              )}
-
-              {/* Active Image container */}
-              {(activeImage || isGenerating) && (
-                <div className="active-image-container">
-                  {activeImage && !isGenerating && (
+              ) : (
+                gallery.filter(Boolean).map((item) => (
+                  <div
+                    key={item?.id || Math.random().toString()}
+                    className="gallery-item"
+                    onClick={() => handleTweak(item)}
+                  >
                     <img
-                      src={getImageUrl(activeImage?.filepath)}
-                      alt={activeImage?.prompt || 'Generated art'}
-                      className="active-image"
+                      src={getImageUrl(item?.filepath)}
+                      alt={item?.prompt || 'Gallery artwork'}
+                      className="gallery-thumbnail"
                     />
-                  )}
-
-                  {isGenerating && (
-                    <div className="canvas-loading-overlay">
-                      <div className="spinner-container">
-                        <div className="spinner-ring"></div>
-                        <div className="spinner-ring"></div>
-                        <div className="spinner-ring"></div>
-                        <div className="spinner-ring"></div>
-                      </div>
-                      <div className="canvas-loading-text">COGNITIVE FLUX ACTIVE: {progress}%</div>
-                      <div className="progress-bar-container">
-                        <div className="progress-bar-fill" style={{ width: `${progress}%` }}></div>
+                    <div className="gallery-overlay">
+                      <div className="gallery-details">
+                        <p className="gallery-prompt">{item?.prompt}</p>
+                        <div className="gallery-meta">
+                          <span className="badge style">{item?.style || 'Custom'}</span>
+                          <span className="badge seed">S: {item?.seed}</span>
+                          <span className="badge dimensions">{item?.width}x{item?.height}</span>
+                        </div>
+                        <div className="gallery-actions">
+                          <button
+                            className="action-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleTweak(item);
+                            }}
+                          >
+                            Tweak
+                          </button>
+                          <button
+                            className="action-btn delete"
+                            onClick={(e) => handleDelete(item?.id, e)}
+                          >
+                            Purge
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  )}
-                </div>
-              )}
-
-              {/* Image HUD controls */}
-              {activeImage && !isGenerating && (
-                <div className="image-hud">
-                  <a
-                    href={getImageUrl(activeImage?.filepath)}
-                    download={`neural-canvas-${activeImage?.id || 'export'}.jpg`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="cyber-button"
-                    style={{ padding: '0.6rem 1rem', fontSize: '0.8rem', textDecoration: 'none' }}
-                  >
-                    💾 EXPORT DATA
-                  </a>
-                  <button
-                    className="cyber-button secondary"
-                    onClick={() => handleTweak(activeImage)}
-                    style={{ padding: '0.6rem 1rem', fontSize: '0.8rem' }}
-                  >
-                    ⚙️ TWEAK PROMPT
-                  </button>
-                </div>
+                  </div>
+                ))
               )}
             </div>
           </section>
+        </main>
+      </SignedIn>
 
-        </div>
-
-        {/* Gallery bottom grid */}
-        <section className="gallery-section">
-          <div className="panel-header">
-            <span className="panel-title">Server Storage Vault (Gallery)</span>
-            <span className="panel-subtitle">SAVED GENERATIONS</span>
+      <SignedOut>
+        <main className="main-wrapper" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 'calc(100vh - 120px)' }}>
+          <div className="cyber-panel" style={{ width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem', padding: '2rem' }}>
+            <div className="panel-header" style={{ width: '100%', justifyContent: 'center', textAlign: 'center' }}>
+              <span className="panel-title" style={{ fontSize: '1.1rem' }}>Operator Identity Check</span>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'center', lineHeight: '1.4', margin: '0 0 0.5rem 0' }}>
+              Secure uplink requested. Provide authorization credentials to initialize neural diffusion subsystems.
+            </p>
+            <SignIn routing="hash" />
           </div>
-
-          <div className="gallery-grid">
-            {gallery.length === 0 ? (
-              <div className="gallery-empty">
-                VAULT EMPTY. Synthesized creations are preserved server-side automatically here.
-              </div>
-            ) : (
-              gallery.filter(Boolean).map((item) => (
-                <div
-                  key={item?.id || Math.random().toString()}
-                  className="gallery-item"
-                  onClick={() => handleTweak(item)}
-                >
-                  <img
-                    src={getImageUrl(item?.filepath)}
-                    alt={item?.prompt || 'Gallery artwork'}
-                    className="gallery-thumbnail"
-                  />
-                  <div className="gallery-overlay">
-                    <div className="gallery-details">
-                      <p className="gallery-prompt">{item?.prompt}</p>
-                      <div className="gallery-meta">
-                        <span className="badge style">{item?.style || 'Custom'}</span>
-                        <span className="badge seed">S: {item?.seed}</span>
-                        <span className="badge dimensions">{item?.width}x{item?.height}</span>
-                      </div>
-                      <div className="gallery-actions">
-                        <button
-                          className="action-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleTweak(item);
-                          }}
-                        >
-                          Tweak
-                        </button>
-                        <button
-                          className="action-btn delete"
-                          onClick={(e) => handleDelete(item?.id, e)}
-                        >
-                          Purge
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-      </main>
+        </main>
+      </SignedOut>
 
       {/* Cyber modal overlay for purge protocol confirmation */}
       {confirmDeleteId && (

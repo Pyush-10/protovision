@@ -1,0 +1,86 @@
+service: neural-canvas
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  environment:
+    CLERK_PUBLISHABLE_KEY: ${env:CLERK_PUBLISHABLE_KEY}
+    CLERK_SECRET_KEY: ${env:CLERK_SECRET_KEY}
+    DYNAMODB_TABLE_NAME: !Ref GalleryTable
+    S3_BUCKET_NAME: !Ref ImagesBucket
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: "1"
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:Query
+            - dynamodb:DeleteItem
+            - dynamodb:GetItem
+          Resource:
+            - !GetAtt GalleryTable.Arn
+            - !Sub "${GalleryTable.Arn}/index/*"
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+          Resource:
+            - !Sub "arn:aws:s3:::${ImagesBucket}/*"
+
+functions:
+  api:
+    handler: server.handler
+    timeout: 30 # Synthesizing images can take up to 15-20 seconds
+    events:
+      - httpApi: '*'
+
+resources:
+  Resources:
+    GalleryTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: neural-canvas-gallery-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        GlobalSecondaryIndexes:
+          - IndexName: IdIndex
+            KeySchema:
+              - AttributeName: id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    ImagesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: neural-canvas-images-${self:provider.stage}-${aws:accountId}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+          BlockPublicPolicy: false
+          IgnorePublicAcls: false
+          RestrictPublicBuckets: false
+
+    ImagesBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref ImagesBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action: "s3:GetObject"
+              Resource: !Sub "arn:aws:s3:::${ImagesBucket}/images/*"
